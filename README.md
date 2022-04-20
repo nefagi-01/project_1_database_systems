@@ -69,17 +69,31 @@ The implementation of the `Fetch` is done in `next()`:
 ## Task 4: Execution Models
 
 ### Subtask 4.A: Enable selection-vectors in operator-at-a-time execution
-In all these operators a buffer has been implemented in order to store the vector of tuples which are taken from the input. Afterwards this buffer is processed accordingly to the operator. It was particularly important to use the `.transpose` method in order to process the values as `Tuple`.
+In all these operators a buffer has been implemented in order to store the vector of tuples which are taken from the input. Afterwards this buffer is processed accordingly to the operator. It was particularly important to use the `.transpose` method in order to process the values as `Tuple`
+
+In addition in all the operators, in order to divide the flag column containing boolean values from the others we use the following method and field:
+1. .dropRight(1) to drop the flag column and keep only the field columns
+2. .last to access only the last column which is the flag column
+
+We can observe how the queries are processed faster than the volcano case. This can be explained by the fact there are fewer function calls since we process vectors of tuples at a time.
+
 * **Filter** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Filter]): in this case the processing consists in only changing the extra flag column containing the `Boolean` values. Here we will change them based on the filter condition. It is important to keep to false the values which were already set to false even if the predicate returns true. That's why we use a `&&` operator between the previous value and the one returned from the `predicate`.  `bufferValues :+ bufferValues.transpose.zipWithIndex.map{case (t,i) => bufferFlag(i).asInstanceOf[Boolean] && predicate(t)}`. After the flag column has been processed then it is again added to the others.
 * **Project** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Project]): in this case we don't change the flag column. We only map over the transposed field columns in order to apply projection.
-* **Join** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Join]): we have 2 buffers for respectively the left and right inputs. Only the active tuples are processed in this operator. Differently from the volcano case, we have both inputs in the beginning, therefore we can build the hash table on the smaller one. Since we have a vector of tuples we can group them using the `.groupBy`  method without creating the groups manually as done in the volcano case. The matching is done using the `.flatMap` method.
-* **Sort** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Sort]): in this operator only active tuples are processed and returned. The sorting is done similarly to the volcano operator. In this case we use the `.slice` operator to remove the not desired tuples according to the `offset` and `fetch` values.
+* **Join** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Join]): we have 2 buffers for respectively the left and right inputs. Differently from the volcano case, we have both inputs in the beginning, therefore we can build the hash table on the smaller one. Since we have a vector of tuples we can group them using the `.groupBy`  method without creating the groups manually as done in the volcano case. The matching is done using the `.flatMap` method. Only the active tuples are processed in this operator: in order to filter the non-actvive we use the `.filter` method as following  `.filter(row => row.last.asInstanceOf[Boolean])`
+* **Sort** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Sort]): in this operator only active tuples are processed and returned. The sorting is done similarly to the volcano operator. In this case we use the `.slice` operator to remove not desired tuples according to the `offset` and `fetch` values.
 * **Aggregate** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Aggregate]): also in this operator only active tuples are processed and returned. Since we have a vector of tuples we can group them using the `.groupBy`  method without creating the groups manually as done in the volcano case. Again we apply `map` and `reduce` on the grouped `Tuple` based on `aggCall`.
 
 ### Subtask 4.B: Column-at-a-time with selection vectors and mapping functions
 
+In this case we can see how in general queries are processed faster than before. This again can be explained by the fewer number of function call due to the fact we process a whole column at a time.
 
-* **Filter** ([ch.epfl.dias.cs422.rel.early.columnatatime.Filter]) differently from the operator-at-a-time case we process directly the columns without using the `.transpose` method. Again, in the Filter operator we only change the values of the flag column.
+* **Filter** ([ch.epfl.dias.cs422.rel.early.columnatatime.Filter]) differently from the operator-at-a-time case we process directly the columns without using the `.transpose` method. Indeed we:
+  1. `unwrap[Boolean](executed.last)` the `HomogeneousColumn` in order to transform it into a `Array[Boolean]`
+  2. Apply the predicate on the other columns and obtain a `predicateArray : Array[Boolean] `
+  3. We zip them together, and we apply a `&&` between them for the same reason as in the operator-at-a-time case. We then transform the result into `HomogeneousColumn`
+  4. Finally, we add the new flag column to the previous ones.
+  
+  As before, in the Filter operator we only change the values of the flag column.  
 * **Project** ([ch.epfl.dias.cs422.rel.early.columnatatime.Project]) also in the project case we directly process the columns without using `.transpose`. 
 * **Join** ([ch.epfl.dias.cs422.rel.early.columnatatime.Join]) in this case we have to change the column representation to the tuple one using `.transpose`. After processing the tuples as in the operator-at-a-time case we re-transpose them to column. Finally, we transform all columns to `HomogeneousColumn` using the method `toHomogeneousColumn()`. Again only active tuples are processed.
 * **Sort** ([ch.epfl.dias.cs422.rel.early.columnatatime.Sort]) the implementation is similar to the previous case. Again we have to transform all columns to `HomogeneousColumn` using the method `toHomogeneousColumn()`. Again only active tuples are processed.
