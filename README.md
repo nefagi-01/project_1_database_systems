@@ -1,302 +1,86 @@
-# CS422 Project 1 - Relational Operators and Execution Models
+# CS422 Project 1  - Stefan Igescu - Relational Operators and Execution Models
 
-This project covers five topics:
-a) the semantics of relational operators,
-b) the iterator execution model,
-c) execution using late materialization,
-d) simple optimization rules, and
-e) column-at-a-time execution.
-We briefly introduce the provided infrastructure, before presenting the project's tasks.
 
-## Infrastructure
+## Task 1: Implement a volcano-style tuple-at-a-time engine
 
-<b> Register for access to the repository and grader. </b> <span style="color:red"> <b> ***DEADLINE 11/03/2022 10:00*** </b> </span>
-For the projects we are going to be using https://gitlab.epfl.ch to distribute the skeleton code and accept the project submissions.
-Thus we require you to register on https://gitlab.epfl.ch and submit your (sciper -> gitlab) username mapping in the following [link](https://moodle.epfl.ch/mod/questionnaire/view.php?id=1197404).
+The implementation of the six basic operators in a volcano-style tuple-at-a-time has been done in the following way.
+### Scan
+Scan uses a counter  `currentRow` to scan a tuple at a time until the total number of rows `numberRows` is achieved. We use the `match` operator to verify if `scannable` is defined and to cast it to `RowStore` in order to be able to use the `.getRow` method to obtain the rows.
+### Select
+This operator is implemented in the `Filter` class.
+We first try to fetch a `Option[Tuple]` using `input.next()`. Afterwards we check if the tuple is defined using the `match` operator. If there is a value inside the `Option` then we filter it using the `predicate` function: if it returns true, then the `Tuple` is returned to the next operator, otherwise we call recursively `next()` until we either find a `Tuple` returning `true`, either we finish the table.
 
-After the deadline we will provide you with a personal skeleton codebase https://gitlab.epfl.ch/DIAS/COURSES/CS-422/2022/students/Project-1-username where <em>username</em> is your GitLab username.
-In this repository you are going to be submitting your project and an automatic grader will be picking up your code to provide you feedback on your score.
+### Project
+The way we retrieve and manage `Option[Tuple]` is similar to before. In this case we apply projection using `map` in this way `nextTuple.map(evaluator)`.
+### Join
+The join has been implemented as Hash Join. Because of the volcano-style we can't know the size of left and right table in advance in order to choose the smaller one as build table, therefore we always choose the left input as build table and the right as probe table. The hash table is implemented with a `HashMap[Tuple, Seq[Tuple]]` and it is populated and probed in the `open()`. The result is stored in a `Seq[Tuple]` and each time `next()` is called a tuple is taken from the head of the sequence and returned.
 
-We suggest you configure your ssh keys and register then in gitlab through your user profile settings,  SSH Keys (https://gitlab.epfl.ch/-/profile/keys). The same GitLab page provides further instruction on creating and adding keys.
+### Aggregate
+The operator is implemented using  `aggregationMap: Map[Tuple, Seq[Tuple]]` where the key consists on the attributes on which the aggregation is done, whereas the value is a `Seq[Tuple]` which collects all the tuples with the respective key. In a second moment the Map is transformed into a `aggregationSeq: IndexedSeq[(Tuple, Seq[Tuple])]` and is then processed each time `next()` is called: 
+1. we take a key-value pair from the head of`aggregationSeq`
+2. we combine the key with the result of mapping and reducing the `aggCalls` over the tuples associated to that key
 
-## Task 1: Implement a volcano-style tuple-at-a-time engine (30%)
+### Sort 
+In order to sort all the tuples we need at first to store all of them. Indeed, in the function `open()` we:
+1. Store all the tuples from the input into `toSort: Seq[Tuple]`
+2. Sort them using the function `sortByCollation`
+3. We drop the first tuples based on the `offset` value.
 
-You will now implement six basic operators (**Scan**,
-**Select**, **Project**, **Join**,
-**Aggregate** and **Sort**) in a volcano-style tuple-at-a-time operators by extending the provided
-trait/interface `ch.epfl.dias.cs422.helpers.rel.early.volcano.Operator`, where each operator processes a single tuple-at-a-time.
-As described in class, each operator in a volcano-style engine requires the implementation of three methods:
+Afterwards in the function `next()` we return a tuple at a time by paying attention to return a maximum of `fetch` tuples. This is done by using the variable `counter`.
 
-* **open():** Initialize the operator's internal state.
-* **next():** Process and return the next result tuple or NilTuple for `EOF`.
-* **close():** Finalize the execution of the operator and clean up the allocated resources.
 
-You are free to implement the **Join** operator of your preference (we recommend
-revising the slides from CS322).
-The **Scan** operator need to support row-store storage layout (NSM).
-Focus on correctness first, then try to optimize your implementation.
-
-**Assumptions.** In the context of this project you will store all data in-memory, thus removing the requirement for a buffer manager. In addition, you can assume that the records will consist of objects (`Any` class in Scala).
-
-**Important!!!** Implement the operators based on the prototypes given in the skeleton code.
-
-__Hint__: we suggest that you start by looking the documentation and classes that appear in the boilerplate code e.g.
-classes named Skeleton.*.
-Rather than try to understand the whole codebase, focus on the task at hand.
-
-## Task 2: Late Materialization (naive) (20%)
-
-In this task, you will implement late materialization.
-
-Late materialization uses virtual IDs to reconstruct tuples on demand.
-For example, suppose that our query plan evaluates the relational expression
-σ<sub>A.x=5</sub>(A) ⨝<sub>A.y=B.y</sub> B. Without late materialization, the query engine
-would execute the following steps:
-
-* Scan columns A.x and A.y from table A
-* Eliminate rows for which A.x!=5
-* Join qualifying (A.x, A.y) tuples with table B on B.y
-
-By contrast, with late materialization, the query engine
-  would execute the following steps:
-
-* Scan column A.x
-* Eliminate rows for which A.x!=5
-* For qualifying tuples, fetch A.y to reconstruct (A.x, A.y) tuples
-* Join (A.x, A.y) tuples with table B on B.y
-
-To implement late materialization, we enrich the query engine's tuples so that they
-contain virtual IDs. We name an enriched tuple `LateTuple`. A `LateTuple` is
- structured as `LateTuple(vid : VID, tuple : Tuple)`
+## Task 2: Late Materialization (naive)
 
 
 ### Subtask 2.A: Implement Late Materialization primitive operators
 
-In the first subtask you should implement the Drop and Stitch operators:
-
-- Drop ([ch.epfl.dias.cs422.rel.early.volcano.late.Drop]) translates `LateTuple` to `Tuple` by dropping the virtual ID.
-Drop allows interfacing late materialization-based execution with existing non-late materialized operators.
-- Stitch ([ch.epfl.dias.cs422.rel.early.volcano.late.Stitch]) is a binary operator (has two input operators)
-  and from the stream of `LateTuple` they provide, it synchronizes the two streams to produce a new stream of `LateTuple`.
-  More specifically, the two inputs produce `LateTuple` for the same table but different groups of columns. These streams
-  may or may not miss tuples, due to some pre-filtering. Stitch should find the virtual IDs that exist on both
-  input streams and generate the output as `LateTuple` that includes the columns of both inputs (first the left input's
-  columns, then the right one's).
-
-  __Example__: if the left input produces:
-
-  ```LateTuple(2, Tuple("a")), LateTuple(8, Tuple("c"))```,
-
-  and the right input produces:
-
-  ```LateTuple(0, Tuple(3.0)), LateTuple(2, Tuple(6.0))```,
-
-  Stitch should produce:
-
-  ```LateTuple(2, Tuple("a", 6.0))```, since the only virtual IDs that both
-  input streams share is 2.
+- Drop ([ch.epfl.dias.cs422.rel.early.volcano.late.Drop]) is implemented by simply accessing to the field `value` of the `LateTuple` and by returning it. 
+- Stitch ([ch.epfl.dias.cs422.rel.early.volcano.late.Stitch]) is implemented by using `hashMap: HashMap[Long, Seq[LateTuple]]` where the keys are the `vids` and the values are the tuples associated. We start from the left input, and we build the `hashMap` based on it. Afterwards, for each tuple in the right input we try to find a match in `hashMap`. If this is the case we stitch the tuples and return the final `LateTuple` as a `Option[LateTuple]`
 
 ### Subtask 2.B: Extend relational operators to support execution on LateTuple data
 
-In the second subtask you should implement a
+* *Filter* ([ch.epfl.dias.cs422.rel.early.volcano.late.LateFilter]) is implementing by adapting the previous version of the Filter by accessing the field `value` of the `LateTuple`. It preserves the previous `vid`.
+* *Join* ([ch.epfl.dias.cs422.rel.early.volcano.late.LateJoin]) is also an adaptation of the previous version by accessing the field `value`. In addition, a new vid is generated for the resulting `LateTuple` by using the counter `i` `Option(LateTuple(i,output))`.
+* *Project* ([ch.epfl.dias.cs422.rel.early.volcano.late.LateProject]) Same as before. It preserves the previous `vid`.
 
-* *Filter* ([ch.epfl.dias.cs422.rel.early.volcano.late.LateFilter])
-* *Join* ([ch.epfl.dias.cs422.rel.early.volcano.late.LateJoin])
-* *Project* ([ch.epfl.dias.cs422.rel.early.volcano.late.LateProject])
 
-that directly operate on `LateTuple` data and, in the case of
-`LateFilter` and `LateProject` preserve virtual IDs.
+## Task 3: Query Optimization Rules
 
-## Task 3: Query Optimization Rules (20%)
-
-In this task you will implement new optimization rules to ''teach'' the query optimizer possible plan transformations.
-Then you are going to use these optimization rules to reduce data access in the query plans.
-
-We use Apache Calcite as the query parser and optimizer. Apache Calcite is an open-source easy-to-extend Apache project,
-used by many commercial and non-commercial systems. In this task, you are going to implement a few new optimization rules
-that allow the parsed query to be transformed into a new query plan.
-
-All optimization rules in Calcite inherit from RelOptRule and in [ch.epfl.dias.cs422.rel.early.volcano.late.qo] you can
-find the boilerplate for the rules you are asked to implement. Specifically, you need to implement onMatchHelper, which
-computes a new sub-plan that replaces the pattern-matched sub-plan.
-Note that these rules operate on top of Logical operators
-and not the operators you implemented. The Logical operators are translated into your operators in a subsequent step of planning.
 
 ### Subtask 3.A: Implement the Fetch operator
 
-Fetch ([ch.epfl.dias.cs422.rel.early.volcano.late.Fetch]) is a unary operator. It reads a stream of input `LateTuple`
-and reconstructs missing columns by directly accessing the corresponding column's values. For example, assume that we are given
-column A.y
-
-```[ 5.0, 4.0, 8.0, 1.0 ]```
-
-Also, assume a Fetch operator is used to reconstruct A.y for tuples
-
-```LateTuple(1, Tuple("a")), LateTuple(2, Tuple("c"))```
-
-Then, the result is
-
-```LateTuple(1, Tuple("a", 4.0)), LateTuple(2, Tuple("c", 8.0))```
-
-The advantage of fetch is that, unlike Stitch, it doesn't have to scan the full column A.y.
-
-Also, Fetch optionally receives a list of expressions to compute over the reconstructed column. If no expressions are provided,
-Fetch simply reconstructs the values of the column itself.
-
-__Hint__: to test Fetch, you need to inject it to the plan (Subtask 3.B).
+The implementation of the `Fetch` is done in `next()`:
+1. We obtain `Option[LateTuple]` from `input.next()` and store it in `nextTuple`.
+2. If we obtain a `LateTuple` then we access `column` at the position `nextTuple.vid`.
+3. If we find a corresponding value in `column` we apply the projection if `projects` is not empty.
+4. At the end we return a `LateTuple` with the same `vid` and with the tuple containing now also the value from `column`.
 
 ### Subtask 3.B: Implement the Optimization rules
 
-You are called to implement three rules:
+- [ch.epfl.dias.cs422.rel.early.volcano.late.qo.LazyFetchRule] the implementation is done by accessing the field `rels` of `call: RelOptRuleCall`.
+  1. We store the input of the stitch operator in `inputStitch = call.rels(1)` by accessing the field `call.rels(1)` at position `1`.
+  2. We store the value `columnScan = call.rels(2).asInstanceOf[LateColumnScan]`. From this variable we will get the column input needed in the Fetch operator by accessing it this way `columnScan.getColumn`.
+  3. We create the new Fetch logical operator by using the corresponding `create` method `LogicalFetch.create(inputStitch,columnScan.getRowType, columnScan.getColumn, None, classOf[LogicalFetch])`
+- [ch.epfl.dias.cs422.rel.early.volcano.late.qo.LazyFetchFilterRule] in this case we return a `LogicalFilter` operator which takes as input a `LogicalFetch` operator. As before we access the logical operators by using the `call.rels` field. In this case we have to pay particular attention to the following things:
+  1. The filter condition has to be shifted based on the number of fields we add to the `LateTuple` because of the Fetch. This is done by using the function `RexUtil.shift(filter.getCondition,0,inputStitch.getRowType.getFieldCount)`
+  2. The input of the Filter operator is stored in `newFetch = LogicalFetch.create(inputStitch,columnScan.getRowType,columnScan.getColumn,None,classOf[LogicalFetch])`
+- [ch.epfl.dias.cs422.rel.early.volcano.late.qo.LazyFetchProjectRule] the procedure is again similar to the previous cases. However, in this case we leverage the field `projects` in the `Fetch` operator in order to apply the projection on the `LateTuple`. It was indeed important to correctly implement the `Fetch` operator in order to correctly apply the projection if the `projects` field is given.
 
-- [ch.epfl.dias.cs422.rel.early.volcano.late.qo.LazyFetchRule] to replace a Stitch with a Fetch,
-- [ch.epfl.dias.cs422.rel.early.volcano.late.qo.LazyFetchFilterRule] to replace a Stitch &rarr; Filter with a Fetch &rarr; Filter,
-- [ch.epfl.dias.cs422.rel.early.volcano.late.qo.LazyFetchProjectRule] to replace a Stitch &rarr; Project with a Fetch.
-
-Example: LazyFetchRule transforms the following subplan
-
-Stitch
-
-&rarr; Filter
-
-&rarr; &rarr; LateColumnScan(A.x)
-
-&rarr; LateColumnScan(A.y)
-
-to
-
-Fetch (A.y)
-
-&rarr; Filter
-
-&rarr; &rarr; LateColumnScan(A.x)
-
-## Task 4: Execution Models (30%)
-
-This tasks focuses on the column-at-a-time execution model, building gradually from an operator-at-a-time execution over
-columnar data.
+## Task 4: Execution Models
 
 ### Subtask 4.A: Enable selection-vectors in operator-at-a-time execution
-
-A fundamental block in implementing vector-at-a-time execution is selection-vectors. In this task you should implement
-the 
-
-* **Filter** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Filter])
-* **Project** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Project])
-* **Join** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Join])
-* **Scan** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Scan])
-* **Sort** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Sort])
-* **Aggregate** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Aggregate]) 
-
-for operator-at-a-time execution over columnar
-inputs. Your implementation should be based on selection vectors and (`Tuple=>Tuple`) evaluators. That is, all operators receive one extra column of `Boolean`s (the last column) that signifies
-which of the inputs tuples are active. The Filter, Scan, Project should not prune tuples, but only set the selection
-vector. For the Join and Aggregate you are free to select whether they only generate active tuples or they also produce
-inactive tuples, as long as you conform with the operator interface (extra Boolean column).
+In all these operators a buffer has been implemented in order to store the vector of tuples which are taken from the input. Afterwards this buffer is processed accordingly to the operator. It was particularly important to use the `.transpose` method in order to process the values as `Tuple`.
+* **Filter** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Filter]): in this case the processing consists in only changing the extra flag column containing the `Boolean` values. Here we will change them based on the filter condition. It is important to keep to false the values which were already set to false even if the predicate returns true. That's why we use a `&&` operator between the previous value and the one returned from the `predicate`.  `bufferValues :+ bufferValues.transpose.zipWithIndex.map{case (t,i) => bufferFlag(i).asInstanceOf[Boolean] && predicate(t)}`. After the flag column has been processed then it is again added to the others.
+* **Project** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Project]): in this case we don't change the flag column. We only map over the transposed field columns in order to apply projection.
+* **Join** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Join]): we have 2 buffers for respectively the left and right inputs. Only the active tuples are processed in this operator. Differently from the volcano case, we have both inputs in the beginning, therefore we can build the hash table on the smaller one. Since we have a vector of tuples we can group them using the `.groupBy`  method without creating the groups manually as done in the volcano case. The matching is done using the `.flatMap` method.
+* **Sort** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Sort]): in this operator only active tuples are processed and returned. The sorting is done similarly to the volcano operator. In this case we use the `.slice` operator to remove the not desired tuples according to the `offset` and `fetch` values.
+* **Aggregate** ([ch.epfl.dias.cs422.rel.early.operatoratatime.Aggregate]): also in this operator only active tuples are processed and returned. Since we have a vector of tuples we can group them using the `.groupBy`  method without creating the groups manually as done in the volcano case. Again we apply `map` and `reduce` on the grouped `Tuple` based on `aggCall`.
 
 ### Subtask 4.B: Column-at-a-time with selection vectors and mapping functions
 
-In this task you should implement 
 
-* **Filter** ([ch.epfl.dias.cs422.rel.early.columnatatime.Filter])
-* **Project** ([ch.epfl.dias.cs422.rel.early.columnatatime.Project])
-* **Join** ([ch.epfl.dias.cs422.rel.early.columnatatime.Join])
-* **Scan** ([ch.epfl.dias.cs422.rel.early.columnatatime.Scan])
-* **Sort** ([ch.epfl.dias.cs422.rel.early.columnatatime.Sort])
-* **Aggregate** ([ch.epfl.dias.cs422.rel.early.columnatatime.Aggregate])
-
-for columnar-at-a-time execution over columnar inputs
-with selection vectors, but this time instead of using the evaluators that work on tuples (`Tuple => Tuple`), you should
-use the `map`-based provided functions that evaluate one expression for the full
-input (`Indexed[HomogeneousColumn] => HomogeneousColumn`).
-
-__Hint__: You can convert a `Column` to `HomogeneousColumn` by using `toHomogeneousColumn()`.
-
-## Project setup & grading
-
-### Setup your environment
-
-The skeleton codebase is pre-configured for development in [IntelliJ (version 2020.3+)](https://www.jetbrains.com/idea/) and this is the only supported IDE. You are free to
-use any other IDE and/or IntelliJ version, but it will be your sole responsibility to fix any configuration issues you
-encounter, including that through other IDEs may not display the provided documentation.
-
-After you install IntelliJ in your machine, from the File menu select
-`New->Project from Version Control`. Then on the left-hand side panel pick `Repository URL`. On the right-hand side
-pick:
-
-* Version control: Git
-* URL: [https://gitlab.epfl.ch/DIAS/COURSES/CS-422/2022/students/Project-1-username](https://gitlab.epfl.ch/DIAS/COURSES/CS-422/2022/students/)
-or [git@gitlab.epfl.ch:DIAS/COURSES/CS-422/2022/students/Project-1-username](git@gitlab.epfl.ch:DIAS/COURSES/CS-422/2022/students/)
-, depending on whether you set up SSH keys (where <username> is your GitLab username).
-* Directory: anything you prefer, but in the past we have seen issues with non-ascii code paths (such as french
-  punctuations), spaces and symlinks
-
-IntelliJ will clone your repository and setup the project environment. If you are prompt to import or auto-import the
-project, please accept. If the JDK is not found, please use IntelliJ's option to `Download JDK`, so that IntelliJ
-install the JDK in a location that will not change your system settings and the IDE will automatically configure the
-project paths to point to this JDK.
-
-### Personal repository
-
-The provided
-repository ([https://gitlab.epfl.ch/DIAS/COURSES/CS-422/2022/students/Project-1-username](https://gitlab.epfl.ch/DIAS/COURSES/CS-422/2022/students/))
-is personal and you are free to push code/branches as you wish. The grader will run on all the branches, but for the
-final submission only the master branch will be taken into consideration.
-
-### Additional information and documentation
-
-The skeleton code depends on a library we provide to integrate the project with a state-of-the-art query optimizer,
-Apache Calcite. Additional information for Calcite can be found in it's official
-site [https://calcite.apache.org](https://calcite.apache.org)
-and it's documentation site [https://calcite.apache.org/javadocAggregate/](https://calcite.apache.org/javadocAggregate/).
-
-Documentation for the integration functions and helpers we provide as part of the project-to-Calcite integration code
-can be found either be browsing the javadoc of the dependency jar (External Libraries/ch.epfl.dias.cs422:base), or by
-browsing to
-[http://diascld24.iccluster.epfl.ch:8080/ch/epfl/dias/cs422/helpers/index.html](http://diascld24.iccluster.epfl.ch:8080/ch/epfl/dias/cs422/helpers/index.html)
-WHILE ON VPN.
-
-*If while browsing the code IntelliJ shows a block:*
-
-```scala
-/**
- * @inheritdoc
- */
-
-```
-
-Next to it, near the column with the file numbers, the latest versions of IntelliJ have a paragraph symbol
-to `Toggle Render View` (to Reader Mode) and get IntelliJ to display the properly rendered inherited prettified
-documentation.
-*In addition to the documentation in inheritdoc, you may want to browse the documentation of parent classes (
-including the skeleton operators and the parent Operator and [ch.epfl.dias.cs422.helpers.rel.RelOperator] classes)*
-
-***Documentation of constructor's input arguments and examples are not copied by the IntelliJ's inheritdoc command, so
-please visit the parent classes for such details***
-
-### Submissions & deliverables
-
-Submit your code and short report, by pushing it to your personal gitlab project before the deadline. The repositories
-will be frozen after the deadline and we are going to run the automated grader on the final tests.
-
-We will grade the last commit on the `master` branch of your GitLab repository. In the context of this project you only
-need to modify the ``ch.epfl.dias.cs422.rel'' package. Except from the credential required to get access to the
-repository, there is nothing else to submit on moodle for this project. Your repository must contain a `Report.pdf` or
-`report.md` which is a short report that gives a small overview of the peculiarities of your implementation and any
-additional details/notes you want to submit. If you submit the report in markdown format, you are responsible for making
-sure it renders properly on gitlab.epfl.ch's preview.
-
-To evaluate your solution, run your code with the provided tests ([ch.epfl.dias.cs422.QueryTest] class).
-
-#### Grading
-
-Keep in mind that we will test your code automatically.
-Any project that fails to conform to the original skeleton code
-and interfaces will fail in the auto grader, and hence, will be graded as a zero.
-More specifically, you should not change the function and constructor signatures provided in the skeleton code, or make any other change that will break interoperability with the base library.
-
-You are allowed to add new classes, files and packages, but only under the current package. Any code outside the current
-package will be ignored and not graded. You are free to edit the `Main.scala` file and/or create new `tests`, but we are
-going to ignore such changes during grading.
-
-Tests that timeout will lose all the points for the timed-out test cases, as if they returned wrong results.
+* **Filter** ([ch.epfl.dias.cs422.rel.early.columnatatime.Filter]) differently from the operator-at-a-time case we process directly the columns without using the `.transpose` method. Again, in the Filter operator we only change the values of the flag column.
+* **Project** ([ch.epfl.dias.cs422.rel.early.columnatatime.Project]) also in the project case we directly process the columns without using `.transpose`. 
+* **Join** ([ch.epfl.dias.cs422.rel.early.columnatatime.Join]) in this case we have to change the column representation to the tuple one using `.transpose`. After processing the tuples as in the operator-at-a-time case we re-transpose them to column. Finally, we transform all columns to `HomogeneousColumn` using the method `toHomogeneousColumn()`. Again only active tuples are processed.
+* **Sort** ([ch.epfl.dias.cs422.rel.early.columnatatime.Sort]) the implementation is similar to the previous case. Again we have to transform all columns to `HomogeneousColumn` using the method `toHomogeneousColumn()`. Again only active tuples are processed.
+* **Aggregate** ([ch.epfl.dias.cs422.rel.early.columnatatime.Aggregate])  the implementation is similar to the previous case. Again we have to transform all columns to `HomogeneousColumn` using the method `toHomogeneousColumn()`. Again only active tuples are processed.
