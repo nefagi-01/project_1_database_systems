@@ -5,7 +5,7 @@
 
 The implementation of the six basic operators in a volcano-style tuple-at-a-time has been done in the following way.
 ### Scan
-Scan uses a counter  `currentRow` to scan a tuple at a time until the total number of rows `numberRows` is achieved. We use the `match` operator to verify if `scannable` is defined and to cast it to `RowStore` in order to be able to use the `.getRow` method to obtain the rows.
+Scan uses a counter  `currentRow` to scan a tuple at a time until the total number of rows `numberRows` (which we obtain with the method of `scannable.getRowCount`) is achieved. We use the `match` operator to verify if `scannable` is defined and to cast it to `RowStore` in order to be able to use the `.getRow` method to obtain the rows.
 ### Select
 This operator is implemented in the `Filter` class.
 We first try to fetch a `Option[Tuple]` using `input.next()`. Afterwards we check if the tuple is defined using the `match` operator. If there is a value inside the `Option` then we filter it using the `predicate` function: if it returns true, then the `Tuple` is returned to the next operator, otherwise we call recursively `next()` until we either find a `Tuple` returning `true`, either we finish the table.
@@ -13,17 +13,26 @@ We first try to fetch a `Option[Tuple]` using `input.next()`. Afterwards we chec
 ### Project
 The way we retrieve and manage `Option[Tuple]` is similar to before. In this case we apply projection using `map` in this way `nextTuple.map(evaluator)`.
 ### Join
-The join has been implemented as Hash Join. Because of the volcano-style we can't know the size of left and right table in advance in order to choose the smaller one as build table, therefore we always choose the left input as build table and the right as probe table. The hash table is implemented with a `HashMap[Tuple, Seq[Tuple]]` and it is populated and probed in the `open()`. The result is stored in a `Seq[Tuple]` and each time `next()` is called a tuple is taken from the head of the sequence and returned.
+The join has been implemented as Hash Join. Because of the volcano-style we can't know the size of left and right table in advance in order to choose the smaller one as build table, therefore we always choose the left input as build table and the right as probe table. The hash table is implemented with a `HashMap[Tuple, Seq[Tuple]]` and it is populated and probed in the `open()`:
+1. We use `left.iterator` to store all the tuples from the left input
+2. We use `leftKeys.map(el => tuple(el))` in order to extract the join-fields
+3. We add the (key,value) pair to the HashMap. If the key is already in the map, then we add the tuple to the sequence of tuples.
+4. We iterate over all the tuples from the right input using `rightIterator.next()`.
+5. We extract the key as before, and we try to find access the map with the key obtained. If the key exists in HashMap, therefore we have a match. We join the tuples and store them in `Seq[Tuple]`
+Each time `next()` is called a tuple is taken from the head of the sequence and returned.
 
 ### Aggregate
-The operator is implemented using  `aggregationMap: Map[Tuple, Seq[Tuple]]` where the key consists on the attributes on which the aggregation is done, whereas the value is a `Seq[Tuple]` which collects all the tuples with the respective key. In a second moment the Map is transformed into a `aggregationSeq: IndexedSeq[(Tuple, Seq[Tuple])]` and is then processed each time `next()` is called: 
-1. we take a key-value pair from the head of`aggregationSeq`
-2. we combine the key with the result of mapping and reducing the `aggCalls` over the tuples associated to that key
+The operator is implemented using  `aggregationMap: Map[Tuple, Seq[Tuple]]` where the key consists on the attributes on which the aggregation is done, whereas the value is a `Seq[Tuple]` which collects all the tuples with the respective key. The map is populated similarly to the join operator, however in this case we extract the key using `groupSet.toArray.map(e => tuple(e))`.  In a second moment the Map is transformed into a `aggregationSeq: IndexedSeq[(Tuple, Seq[Tuple])]` and is then processed each time `next()` is called: 
+1. We take a key-value pair from the head of`aggregationSeq`
+2. We combine the key with the result of mapping and reducing the `aggCalls` over the tuples associated to that key `toAggregate._1.++(aggCalls.map(agg => toAggregate._2.map(t => agg.getArgument(t)).reduce(agg.reduce)))`
+3. We remove the key-value pair from the sequence.
 
 ### Sort 
 In order to sort all the tuples we need at first to store all of them. Indeed, in the function `open()` we:
 1. Store all the tuples from the input into `toSort: Seq[Tuple]`
-2. Sort them using the function `sortByCollation`
+2. Sort them using the function `sortByCollation`. The function is implemented using the variable `fieldCollations` which we obtain from the field value `collation`.  `fieldCollations` will give us indeed the following information for each field to sort:
+   1. the field index using the method `.getFieldIndex`
+   2. the direction of sorting using the method `.getDirection`
 3. We drop the first tuples based on the `offset` value.
 
 Afterwards in the function `next()` we return a tuple at a time by paying attention to return a maximum of `fetch` tuples. This is done by using the variable `counter`.
