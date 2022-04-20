@@ -29,5 +29,11 @@ class Filter protected (
   /**
    * @inheritdoc
    */
-  def execute(): IndexedSeq[Column] = ???
+  def execute(): IndexedSeq[Column] = {
+    val buffer = input.execute()
+    val bufferValues = buffer.dropRight(1)
+    val bufferFlag = buffer.last
+    //important to consider the previous value of the flag column in bufferFlag(i) in order to not change it from False to True accidentally.
+    bufferValues :+ bufferValues.transpose.zipWithIndex.map{case (t,i) => bufferFlag(i).asInstanceOf[Boolean] && predicate(t)}
+  }
 }

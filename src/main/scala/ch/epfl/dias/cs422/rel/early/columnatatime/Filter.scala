@@ -35,5 +35,14 @@ class Filter protected (
   /**
     * @inheritdoc
     */
-  def execute(): IndexedSeq[HomogeneousColumn] = ???
+  def execute(): IndexedSeq[HomogeneousColumn] = {
+    val executed = input.execute()
+    //use method unwrap from HomogeneousColumn to transform HomogeneousColumn into array
+    val lastArray : Array[Boolean] = unwrap[Boolean](executed.last)
+    val predicateArray : Array[Boolean]= mappredicate(executed.dropRight(1))
+    //transform final flag array again into HomogeneousColumn
+    val resultFlagArray : HomogeneousColumn= toHomogeneousColumn(lastArray.zip(predicateArray).map{ case (a,b) => a && b})
+    executed.dropRight(1) :+ resultFlagArray
+
+  }
 }

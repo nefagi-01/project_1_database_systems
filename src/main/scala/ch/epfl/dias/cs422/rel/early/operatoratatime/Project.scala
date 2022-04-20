@@ -4,7 +4,6 @@ import ch.epfl.dias.cs422.helpers.builder.skeleton
 import ch.epfl.dias.cs422.helpers.rel.RelOperator._
 import org.apache.calcite.rel.`type`.RelDataType
 import org.apache.calcite.rex.RexNode
-
 import scala.jdk.CollectionConverters._
 
 /**
@@ -32,5 +31,12 @@ class Project protected (
   /**
    * @inheritdoc
    */
-  def execute(): IndexedSeq[Column] = ???
+  def execute(): IndexedSeq[Column] = {
+    val buffer = input.execute()
+    if (buffer.isEmpty) {
+      buffer
+    } else {
+      buffer.dropRight(1).transpose.map(t => evaluator(t)).transpose :+ buffer.last
+    }
+  }
 }

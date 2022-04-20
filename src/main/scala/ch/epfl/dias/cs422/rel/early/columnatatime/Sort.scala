@@ -2,9 +2,8 @@ package ch.epfl.dias.cs422.rel.early.columnatatime
 
 import ch.epfl.dias.cs422.helpers.builder.skeleton
 import ch.epfl.dias.cs422.helpers.rel.RelOperator._
-import org.apache.calcite.rel.RelCollation
+import org.apache.calcite.rel.{RelCollation, RelFieldCollation}
 
-import scala.jdk.CollectionConverters._
 
 /**
   * @inheritdoc
@@ -28,5 +27,46 @@ class Sort protected (
   /**
    * @inheritdoc
    */
-  override def execute(): IndexedSeq[HomogeneousColumn] = ???
+  override def execute(): IndexedSeq[HomogeneousColumn] = {
+
+    val fieldCollations: Array[RelFieldCollation]=collation.getFieldCollations.toArray(Array.ofDim[RelFieldCollation](collation.getFieldCollations.size))
+    def sortByCollation(t1: Tuple, t2:Tuple): Boolean = {
+      var i = 0
+      while (i < fieldCollations.length) {
+        val sortInfo = fieldCollations(i)
+        val result = t1(sortInfo.getFieldIndex)
+          .asInstanceOf[Comparable[Any]].compareTo(
+          t2(sortInfo.getFieldIndex)
+            .asInstanceOf[Comparable[Any]])
+
+        if (result != 0) {
+          if (sortInfo.getDirection.isDescending) {
+            if (result > 0)
+              return true
+            else
+              return false
+          } else {
+            if (result < 0)
+              return true
+            else
+              return false
+          }
+        }
+
+        i += 1
+      }
+      true
+    }
+
+    //keep only active
+    val start = offset.getOrElse(0)
+    val end = start + fetch.getOrElse(Int.MaxValue)
+    input.execute()
+      .transpose
+      .filter(_.last.asInstanceOf[Boolean])
+      .sortWith{case (t1, t2) => sortByCollation(t1, t2)}
+      .slice(start, end)
+      .transpose
+      .map(column => toHomogeneousColumn(column))
+  }
 }

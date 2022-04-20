@@ -31,5 +31,14 @@ class Project protected (
   /**
    * @inheritdoc
    */
-  def execute(): IndexedSeq[HomogeneousColumn] = ???
+  def execute(): IndexedSeq[HomogeneousColumn] = {
+    val buffer = input.execute()
+    if (buffer.isEmpty) {
+      buffer
+    } else {
+      evals.map(_(buffer.dropRight(1))) :+ buffer.last
+    }
+  }
 }
+
+

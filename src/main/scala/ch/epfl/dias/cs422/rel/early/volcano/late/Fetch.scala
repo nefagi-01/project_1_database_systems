@@ -2,7 +2,7 @@ package ch.epfl.dias.cs422.rel.early.volcano.late
 
 import ch.epfl.dias.cs422.helpers.builder.skeleton
 import ch.epfl.dias.cs422.helpers.builder.skeleton.logical.LogicalFetch
-import ch.epfl.dias.cs422.helpers.rel.RelOperator.{LateTuple, Tuple}
+import ch.epfl.dias.cs422.helpers.rel.RelOperator.{LateTuple, NilLateTuple, Tuple}
 import ch.epfl.dias.cs422.helpers.rel.late.volcano.naive.Operator
 import ch.epfl.dias.cs422.helpers.store.late.LateStandaloneColumnStore
 import org.apache.calcite.rel.`type`.RelDataType
@@ -25,17 +25,32 @@ class Fetch protected (
   /**
     * @inheritdoc
     */
-  override def open(): Unit = ???
+  override def open(): Unit = input.open()
 
   /**
     * @inheritdoc
     */
-  override def next(): Option[LateTuple] = ???
+  override def next(): Option[LateTuple] = {
+    input.next() match {
+      case Some(nextTuple) =>
+        column.getElement(nextTuple.vid) match {
+          case Some(value)=>
+            projects match {
+              case Some(_)  => Option(LateTuple(nextTuple.vid,nextTuple.value.++(evaluator(IndexedSeq(value)))))
+              case None => Option(LateTuple(nextTuple.vid,nextTuple.value.++(IndexedSeq(value))))
+            }
+
+          case None => NilLateTuple
+        }
+
+      case None => NilLateTuple
+    }
+  }
 
   /**
     * @inheritdoc
     */
-  override def close(): Unit = ???
+  override def close(): Unit = input.close()
 }
 
 object Fetch {

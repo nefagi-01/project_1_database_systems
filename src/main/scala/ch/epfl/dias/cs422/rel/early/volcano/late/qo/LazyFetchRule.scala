@@ -5,6 +5,8 @@ import ch.epfl.dias.cs422.helpers.qo.rules.skeleton.LazyFetchRuleSkeleton
 import ch.epfl.dias.cs422.helpers.store.late.rel.late.volcano.LateColumnScan
 import org.apache.calcite.plan.{RelOptRuleCall, RelRule}
 import org.apache.calcite.rel.RelNode
+import ch.epfl.dias.cs422.helpers.builder.skeleton.logical.LogicalFetch
+
 
 /**
   * RelRule (optimization rule) that finds an operator that stitches a new column
@@ -18,11 +20,17 @@ class LazyFetchRule protected (config: RelRule.Config)
   extends LazyFetchRuleSkeleton(
     config
   ) {
-  override def onMatchHelper(call: RelOptRuleCall): RelNode = ???
+
+
+  override def onMatchHelper(call: RelOptRuleCall): RelNode = {
+    val inputStitch = call.rels(1)
+    val columnScan = call.rels(2).asInstanceOf[LateColumnScan]
+    LogicalFetch.create(inputStitch,columnScan.getRowType, columnScan.getColumn, None, classOf[LogicalFetch])
+  }
+
 }
 
 object LazyFetchRule {
-
   /**
     * Instance for a [[LazyFetchRule]]
     */

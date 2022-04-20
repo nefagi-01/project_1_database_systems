@@ -24,6 +24,7 @@ class Scan protected(
     table.unwrap(classOf[ScannableTable])
   ).asInstanceOf[ColumnStore]
 
+
   /**
    * @inheritdoc
    */

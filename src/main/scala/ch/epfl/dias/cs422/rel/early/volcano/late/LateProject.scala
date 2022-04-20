@@ -1,7 +1,7 @@
 package ch.epfl.dias.cs422.rel.early.volcano.late
 
 import ch.epfl.dias.cs422.helpers.builder.skeleton
-import ch.epfl.dias.cs422.helpers.rel.RelOperator.{LateTuple, Tuple}
+import ch.epfl.dias.cs422.helpers.rel.RelOperator.{LateTuple, NilTuple, Tuple}
 import org.apache.calcite.rel.`type`.RelDataType
 import org.apache.calcite.rex.RexNode
 
@@ -36,15 +36,20 @@ class LateProject protected (
   /**
     * @inheritdoc
     */
-  override def open(): Unit = ???
+  override def open(): Unit = input.open()
 
   /**
     * @inheritdoc
     */
-  override def next(): Option[LateTuple] = ???
+  override def next(): Option[LateTuple] = {
+    input.next() match {
+      case Some(lateTuple) => Option(LateTuple(lateTuple.vid, Option(lateTuple.value).map(evaluator).get))
+      case None => NilTuple
+    }
+  }
 
   /**
     * @inheritdoc
     */
-  override def close(): Unit = ???
+  override def close(): Unit = input.close()
 }

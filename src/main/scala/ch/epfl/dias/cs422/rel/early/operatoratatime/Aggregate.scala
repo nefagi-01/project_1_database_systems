@@ -5,7 +5,6 @@ import ch.epfl.dias.cs422.helpers.rel.RelOperator.Column
 import ch.epfl.dias.cs422.helpers.rex.AggregateCall
 import org.apache.calcite.util.ImmutableBitSet
 
-import scala.jdk.CollectionConverters._
 
 /**
   * @inheritdoc
@@ -31,5 +30,13 @@ class Aggregate protected (
   /**
    * @inheritdoc
    */
-  override def execute(): IndexedSeq[Column] = ???
+  override def execute(): IndexedSeq[Column] = {
+    //keep only active tuples
+    val activeBuffer = input.execute().transpose.filter(row => row.last.asInstanceOf[Boolean])
+    if (activeBuffer.isEmpty && groupSet.isEmpty){
+      IndexedSeq(aggCalls.map(agg => agg.emptyValue):+ true).transpose
+    } else {
+      activeBuffer.groupBy(tuple => groupSet.toArray.map(e => tuple(e)).toIndexedSeq).toIndexedSeq.map(toAggregate => toAggregate._1.++(aggCalls.map(agg => toAggregate._2.map(t => agg.getArgument(t)).reduce(agg.reduce))):+true).transpose
+    }
+  }
 }

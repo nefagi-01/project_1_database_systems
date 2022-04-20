@@ -1,11 +1,12 @@
 package ch.epfl.dias.cs422.rel.early.volcano.late.qo
 
-import ch.epfl.dias.cs422.helpers.builder.skeleton.logical.LogicalStitch
+import ch.epfl.dias.cs422.helpers.builder.skeleton.logical.{LogicalFetch, LogicalStitch}
 import ch.epfl.dias.cs422.helpers.qo.rules.skeleton.LazyFetchFilterRuleSkeleton
 import ch.epfl.dias.cs422.helpers.store.late.rel.late.volcano.LateColumnScan
 import org.apache.calcite.plan.{RelOptRuleCall, RelRule}
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.logical.LogicalFilter
+import org.apache.calcite.rex.RexUtil
 
 /**
   * RelRule (optimization rule) that finds a reconstruct operator that
@@ -21,7 +22,17 @@ class LazyFetchFilterRule protected (config: RelRule.Config)
     config
   ) {
 
-  override def onMatchHelper(call: RelOptRuleCall): RelNode = ???
+
+
+
+  override def onMatchHelper(call: RelOptRuleCall): RelNode = {
+    val inputStitch = call.rels(1)
+    val filter = call.rels(2).asInstanceOf[LogicalFilter]
+    val columnScan = call.rels(3).asInstanceOf[LateColumnScan]
+    val newFetch = LogicalFetch.create(inputStitch,columnScan.getRowType,columnScan.getColumn,None,classOf[LogicalFetch])
+    LogicalFilter.create(newFetch, RexUtil.shift(filter.getCondition,0,inputStitch.getRowType.getFieldCount))
+  }
+
 }
 
 object LazyFetchFilterRule {
